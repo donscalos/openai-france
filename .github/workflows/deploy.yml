@@ -1,14 +1,20 @@
 name: Deploy to Cloudflare Pages
 
-# Cloudflare Pages is connected directly to this GitHub repo via Git integration.
-# It auto-deploys on every push to main — no wrangler token required.
+# Deploie le site sur Cloudflare Pages a chaque push sur main via wrangler.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  notify:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy triggered
-        run: echo "Push to main — Cloudflare Pages auto-deploy in progress."
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name=openai-france --branch=main
