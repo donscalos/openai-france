@@ -55,7 +55,7 @@ jobs:
           CONTRAINTES STRICTES :
           - Retourne UNIQUEMENT le HTML complet, rien d'autre, pas de markdown, pas de balises code
           - Commence par <!DOCTYPE html> et termine par </html>
-          - Inclure ce snippet Google Analytics dans le <head> : <!-- Google tag (gtag.js) --> <script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','GA_MEASUREMENT_ID');</script>
+          - Inclure ce snippet Google Analytics dans le <head> : <!-- Google tag (gtag.js) --> <script async src="https://www.googletagmanager.com/gtag/js?id=G-7F61CTTGR7"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-7F61CTTGR7');</script>
           - Utilise exactement ce CSS externe : <link rel="stylesheet" href="../css/style.css">
           - Structure de navigation identique aux autres pages du site :
             <header><div class="header-inner"><a href="/" class="logo">OpenAI France</a><nav><a href="/">Accueil</a><a href="/chatgpt/">ChatGPT</a><a href="/api/">API</a><a href="/actualites/">Actualités</a><a href="/blog/">Blog</a></nav></div></header>
