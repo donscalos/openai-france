@@ -1,0 +1,221 @@
+name: Generate SEO Article
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Monday 8am UTC
+    - cron: '0 8 * * 4'  # Thursday 8am UTC
+  workflow_dispatch:      # manual trigger
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Pick next keyword
+        id: keyword
+        run: |
+          PENDING=""
+          while IFS= read -r kw; do
+            [[ -z "$kw" ]] && continue
+            if [ ! -d "$kw" ]; then
+              PENDING="$kw"
+              break
+            fi
+          done < _seo/keywords.txt
+          if [ -z "$PENDING" ]; then
+            echo "All keywords done."
+            echo "slug=" >> $GITHUB_OUTPUT
+          else
+            echo "slug=$PENDING" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate article with Claude
+        if: steps.keyword.outputs.slug != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLUG: ${{ steps.keyword.outputs.slug }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, re, pathlib, urllib.request
+
+          slug = os.environ["SLUG"]
+          title_raw = slug.replace("-", " ").title()
+
+          prompt = f"""Tu es un expert SEO français spécialisé dans l'intelligence artificielle et les produits OpenAI. Génère une page HTML complète et autonome pour le mot-clé "{title_raw}" sur le site openai-france.fr.
+
+          CONTRAINTES STRICTES :
+          - Retourne UNIQUEMENT le HTML complet, rien d'autre, pas de markdown, pas de balises code
+          - Commence par <!DOCTYPE html> et termine par </html>
+          - Inclure ce snippet Google Analytics dans le <head> : <!-- Google tag (gtag.js) --> <script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','GA_MEASUREMENT_ID');</script>
+          - Utilise exactement ce CSS externe : <link rel="stylesheet" href="../css/style.css">
+          - Structure de navigation identique aux autres pages du site :
+            <header><div class="header-inner"><a href="/" class="logo">OpenAI France</a><nav><a href="/">Accueil</a><a href="/chatgpt/">ChatGPT</a><a href="/api/">API</a><a href="/actualites/">Actualités</a><a href="/blog/">Blog</a></nav></div></header>
+          - Footer identique : © 2025 openai-france.fr — Guide indépendant, non affilié à OpenAI
+          - Lang="fr", canonical="https://openai-france.fr/{slug}/"
+          - Title SEO optimisé (60 chars max), meta description (155 chars max)
+          - Contenu : minimum 800 mots, H2/H3, listes, tableaux si pertinent
+          - Classes CSS disponibles : .hero, .hero-inner, .badge, .btn.btn-primary, .btn.btn-outline, .card-grid, .card, .highlight, .list-check, .steps, .faq, .faq-item, .compare-table, .affiliate-box, .toc, .breadcrumb, .section-eyebrow, .decorated, .ad-slot, .stats-strip
+          - Intègre 2-3 liens internes vers /chatgpt/, /api/, /actualites/
+          - Ajoute schema JSON-LD Article ou FAQPage selon le contenu
+          - Insère 2 blocs <div class="ad-slot"><!-- AdSense --></div> (milieu + bas)
+          - Ton : expert accessible, pédagogique, en français courant
+          - Le contenu doit être utile, original et répondre à l'intention de recherche du mot-clé
+          - Thématique : OpenAI, ChatGPT, GPT-4, API IA, intelligence artificielle en France
+
+          Mot-clé principal : {title_raw}
+          URL de la page : https://openai-france.fr/{slug}/
+          """
+
+          payload = json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}]
+          }).encode()
+
+          req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+              "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json"
+            }
+          )
+          with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+
+          html = data["content"][0]["text"].strip()
+          html = re.sub(r'^```html\s*', '', html)
+          html = re.sub(r'^```\s*', '', html)
+          html = re.sub(r'\s*```$', '', html)
+
+          out = pathlib.Path(slug)
+          out.mkdir(exist_ok=True)
+          (out / "index.html").write_text(html, encoding="utf-8")
+          print(f"Article written to {slug}/index.html ({len(html)} chars)")
+          PYEOF
+
+      - name: Regenerate blog index
+        if: steps.keyword.outputs.slug != ''
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, re, hashlib
+
+          SKIP = {'blog', 'css', 'chatgpt', 'api', 'actualites', '_seo', '.github'}
+
+          PEXELS_POOL = [
+            '190819', '125779', '9841564', '3658445', '190820',
+            '1697214', '9841563', '3945671', '190818', '3829906',
+            '2783873', '190817', '1697213', '3830188', '190816',
+            '2956417', '3829907', '1697215', '9841565', '2783874',
+            '190815', '3945672', '2956418', '3830189', '190814',
+          ]
+
+          def pexels_url(slug, w=600, h=360):
+            idx = int(hashlib.md5(slug.encode()).hexdigest(), 16) % len(PEXELS_POOL)
+            pid = PEXELS_POOL[idx]
+            return f'https://images.pexels.com/photos/{pid}/pexels-photo-{pid}.jpeg?auto=compress&cs=tinysrgb&w={w}&h={h}&fit=crop'
+
+          articles = []
+          for d in sorted(pathlib.Path('.').iterdir()):
+            if d.is_dir() and d.name not in SKIP and not d.name.startswith('.'):
+              html = d / 'index.html'
+              if html.exists():
+                content = html.read_text(encoding='utf-8')
+                title = re.search(r'<title>(.*?)</title>', content)
+                desc  = re.search(r'<meta name="description" content="(.*?)"', content)
+                articles.append({
+                  'slug':  d.name,
+                  'title': title.group(1) if title else d.name.replace('-', ' ').title(),
+                  'desc':  desc.group(1)  if desc  else '',
+                })
+
+          cards = ''
+          for a in articles:
+            img_url = pexels_url(a['slug'])
+            img_alt = a['title'].replace('"', '').strip()
+            cards += f'''    <a href="/{a['slug']}/" class="card card-link">
+              <div class="card-thumb"><img src="{img_url}" alt="{img_alt}" loading="lazy"></div>
+              <div class="card-body">
+                <h3>{a['title']}</h3>
+                <p>{a['desc']}</p>
+              </div>
+            </a>\n'''
+
+          blog = pathlib.Path('blog/index.html')
+          src = blog.read_text(encoding='utf-8')
+          src = re.sub(r'<!-- ARTICLES_START -->.*?<!-- ARTICLES_END -->',
+                       f'<!-- ARTICLES_START -->\n{cards}    <!-- ARTICLES_END -->',
+                       src, flags=re.DOTALL)
+          blog.write_text(src, encoding='utf-8')
+          print(f"Blog index updated with {len(articles)} articles")
+          PYEOF
+
+      - name: Regenerate sitemap
+        if: steps.keyword.outputs.slug != ''
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, re
+          from datetime import date
+
+          SKIP = {'blog', 'css', 'chatgpt', 'api', 'actualites', '_seo', '.github'}
+          STATIC_PAGES = [
+            ('https://openai-france.fr/', '1.0', 'weekly'),
+            ('https://openai-france.fr/chatgpt/', '0.9', 'monthly'),
+            ('https://openai-france.fr/api/', '0.9', 'monthly'),
+            ('https://openai-france.fr/actualites/', '0.8', 'weekly'),
+            ('https://openai-france.fr/blog/', '0.8', 'weekly'),
+          ]
+
+          today = date.today().isoformat()
+          urls = ''
+
+          def url_block(loc, lastmod, freq, priority):
+            return (
+              '  <url>\n'
+              f'    <loc>{loc}</loc>\n'
+              f'    <lastmod>{lastmod}</lastmod>\n'
+              f'    <changefreq>{freq}</changefreq>\n'
+              f'    <priority>{priority}</priority>\n'
+              '  </url>\n'
+            )
+
+          for loc, priority, freq in STATIC_PAGES:
+            urls += url_block(loc, today, freq, priority)
+
+          for d in sorted(pathlib.Path('.').iterdir()):
+            if d.is_dir() and d.name not in SKIP and not d.name.startswith('.'):
+              html_file = d / 'index.html'
+              if html_file.exists():
+                mtime = date.fromtimestamp(html_file.stat().st_mtime).isoformat()
+                loc = f'https://openai-france.fr/{d.name}/'
+                urls += url_block(loc, mtime, 'monthly', '0.7')
+
+          header = '<?xml version="1.0" encoding="UTF-8"?>\n'
+          header += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n\n'
+          sitemap = header + urls + '</urlset>'
+
+          pathlib.Path('sitemap.xml').write_text(sitemap, encoding='utf-8')
+          print(f"Sitemap regenerated with {urls.count('<url>')} URLs")
+          PYEOF
+
+      - name: Commit and push
+        if: steps.keyword.outputs.slug != ''
+        env:
+          SLUG: ${{ steps.keyword.outputs.slug }}
+        run: |
+          git config user.name "SEO Bot"
+          git config user.email "seobot@openai-france.fr"
+          git add "$SLUG/" blog/index.html sitemap.xml
+          git commit -m "SEO: add article $SLUG + update blog index + sitemap"
+          git push
+          echo "Pushed to main — Cloudflare Pages Git integration will auto-deploy."

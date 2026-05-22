@@ -1,0 +1,14 @@
+name: Deploy to Cloudflare Pages
+
+# Cloudflare Pages is connected directly to this GitHub repo via Git integration.
+# It auto-deploys on every push to main — no wrangler token required.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy triggered
+        run: echo "Push to main — Cloudflare Pages auto-deploy in progress."
